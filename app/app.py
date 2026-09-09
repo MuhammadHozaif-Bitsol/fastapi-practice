@@ -1,81 +1,122 @@
-from fastapi import FastAPI, HTTPException
+from contextlib import asynccontextmanager
+from typing import Annotated
 
-from app.schemas import PostCreate
+from fastapi import (
+    Depends,
+    FastAPI,
+    File,
+    Form,
+    HTTPException,
+    UploadFile,
+    status,
+)
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
-app = FastAPI()
-text_posts = {
-    1: {
-        "title": "Getting Started with Python",
-        "content": "Python is an easy-to-learn and powerful programming language.",
-    },
-    2: {
-        "title": "Why Use FastAPI?",
-        "content": "FastAPI provides high performance, automatic docs, and intuitive type hints.",
-    },
-    3: {
-        "title": "Understanding REST APIs",
-        "content": "RESTful services use standard HTTP methods like GET, POST, PUT, and DELETE.",
-    },
-    4: {
-        "title": "Path vs Query Parameters",
-        "content": "Path params identify specific resources, while query params filter collections.",
-    },
-    5: {
-        "title": "Introduction to Databases",
-        "content": "Relational databases use SQL to store and query structured data efficiently.",
-    },
-    6: {
-        "title": "Docker Basics",
-        "content": "Containers package your application along with all its dependencies for easy deployment.",
-    },
-    7: {
-        "title": "Async Programming Concepts",
-        "content": "Asynchronous I/O prevents server blocking during database and network calls.",
-    },
-    8: {
-        "title": "Git Workflow Tips",
-        "content": "Commit often, write descriptive commit messages, and use feature branches.",
-    },
-    9: {
-        "title": "Authentication vs Authorization",
-        "content": "Authentication verifies who you are, while authorization determines what you can do.",
-    },
-    10: {
-        "title": "Deploying to Production",
-        "content": "Use reverse proxies, process managers, and proper logging when deploying live.",
-    },
-}
+from app.db import Post, create_db_and_table, get_async_session
+from app.images import imagekit
 
 
-@app.get("/")
-def app_start():
-    return {"message": "app running"}
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    await create_db_and_table()
+    yield
 
 
-@app.get("/hello-world")
-def hello_world():
-    return {"message": "hello world"}
+app = FastAPI(lifespan=lifespan)
 
 
-@app.get("/get-posts")
-def get_posts(limit: int | None = None):
-    if limit:
-        return dict(list(text_posts.items())[:limit])
-    return text_posts
+@app.post("/upload")
+async def upload_file(
+    file: Annotated[UploadFile, File(...)],
+    session: Annotated[AsyncSession, Depends(get_async_session)],
+    caption: Annotated[str, Form()] = "",
+):
+    try:
+        file_bytes = await file.read()
+
+        print(
+            f"Filename: {file.filename!r}, "
+            f"Content-Type: {file.content_type!r}, "
+            f"Size received: {len(file_bytes)} bytes, "
+            f"Header: {file_bytes[:16].hex(' ')}"
+        )
+
+        if not file_bytes:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="The uploaded file is empty.",
+            )
+
+        filename = file.filename or "uploaded_file"
+
+        # Latest ImageKit SDK API
+        upload_result = imagekit.files.upload(
+            file=file_bytes,
+            file_name=filename,
+            tags=["backend-upload"],
+            use_unique_file_name=True,
+        )
+
+        file_url = getattr(upload_result, "url", None)
+
+        print(
+            "ImageKit result:",
+            {
+                "file_id": getattr(upload_result, "file_id", None),
+                "name": getattr(upload_result, "name", None),
+                "url": file_url,
+                "size": getattr(upload_result, "size", None),
+            },
+        )
+
+        if not file_url:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="ImageKit upload failed to return a file URL.",
+            )
+
+        content_type = file.content_type or ""
+
+        file_type = "video" if content_type.startswith("video/") else "photo"
+
+        post = Post(
+            caption=caption,
+            url=file_url,
+            file_type=file_type,
+            file_name=(getattr(upload_result, "name", None) or filename),
+        )
+
+        session.add(post)
+
+        await session.commit()
+        await session.refresh(post)
+
+        return post
+
+    except HTTPException:
+        raise
+
+    except Exception as exc:
+        await session.rollback()
+
+        print(f"Upload error: {type(exc).__name__}: {exc}")
+
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Upload processing failed: {exc}",
+        ) from exc
+
+    finally:
+        await file.close()
 
 
-@app.get("/get-post/{id}", responses={404: {"description": "Post Not Found"}})
-def get_post_by_id(id: int):
-    if id not in text_posts:
-        raise HTTPException(status_code=404, detail="Post Not Found")
-    return text_posts.get(id)
+@app.get("/feed")
+async def get_feed(
+    session: Annotated[AsyncSession, Depends(get_async_session)],
+):
+    result = await session.execute(select(Post).order_by(Post.id.desc()))
 
+    posts = result.scalars().all()
 
-@app.post("/create-post")
-def create_post(post: PostCreate) -> PostCreate:
-    new_post = {
-        "title": post.title,
-        "content": post.content,
-    }
-    text_posts[max(text_posts.keys()) + 1] = new_post
-    return new_post
+    return posts
