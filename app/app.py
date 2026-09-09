@@ -1,5 +1,6 @@
 from contextlib import asynccontextmanager
 from typing import Annotated
+from uuid import UUID
 
 from fastapi import (
     Depends,
@@ -120,3 +121,27 @@ async def get_feed(
     posts = result.scalars().all()
 
     return posts
+
+
+@app.delete("/posts/{post_id}")
+async def delete_post(
+    post_id: UUID,
+    session: Annotated[AsyncSession, Depends(get_async_session)],
+):
+    result = await session.execute(select(Post).where(Post.id == post_id))
+
+    post = result.scalar_one_or_none()
+
+    if post is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Post not found.",
+        )
+
+    await session.delete(post)
+    await session.commit()
+
+    return {
+        "message": "Post deleted successfully",
+        "id": str(post_id),
+    }
