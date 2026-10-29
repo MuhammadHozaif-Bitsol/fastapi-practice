@@ -3,6 +3,7 @@ import uuid
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
 
+from dotenv import load_dotenv
 from sqlalchemy import Column, DateTime, String, Text, Uuid
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
@@ -10,6 +11,8 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 from sqlalchemy.orm import DeclarativeBase
+
+load_dotenv()
 
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./test.db")
 
@@ -26,7 +29,7 @@ class Post(Base):
     url = Column(String, nullable=False)
     file_type = Column(String, nullable=False)
     file_name = Column(String, nullable=False)
-    created_at = Column(DateTime, default=datetime.now(UTC))
+    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
 
 
 engine = create_async_engine(DATABASE_URL)

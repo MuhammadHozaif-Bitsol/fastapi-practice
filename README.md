@@ -51,7 +51,7 @@ There are no migrations. On startup, the app's lifespan handler calls `create_db
 | `IMAGEKIT_PRIVATE_KEY` | `app/images.py` | ImageKit private key for uploads. |
 | `DATABASE_URL` | `app/db.py` | Optional. Overrides the default SQLite URL. |
 
-`.env` is loaded by `app/images.py` and is in `.gitignore`. `app/db.py` reads `DATABASE_URL` before that happens, so set `DATABASE_URL` in your shell environment rather than in `.env`.
+Both can be set in a `.env` file in the project root (it is in `.gitignore`) or in your shell environment.
 
 ## Project structure
 
